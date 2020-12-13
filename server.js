@@ -14,8 +14,14 @@ app.get('/api/search', (req, res) => {
         .catch(e => res.send(e));
 });
 
+app.get('/api/channel', (req, res) => {
+    scraper.channel(req.query.id, req.query.key, req.query.pageToken)
+        .then(x => res.json(x))
+        .catch(e => res.send(e));
+});
+
 app.listen(process.env.PORT || 8080, function () {
-  console.log('Listening on port 8080');
+    console.log('Listening on port 8080');
 });
 
 module.exports = app;

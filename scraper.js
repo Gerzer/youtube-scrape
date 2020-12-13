@@ -69,6 +69,92 @@ async function youtube(query, key, pageToken) {
     });
 };
 
+async function channel(query, key, pageToken) {
+    return new Promise((resolve, reject) => {
+        let json = { results: [], version: require('./package.json').version };
+
+        // Specify YouTube search url
+        if (key) {
+            json["parser"] = "json_format.page_token";
+            json["key"] = key;
+
+            // Access YouTube search API
+            request.post(`https://www.youtube.com/youtubei/v1/search?key=${key}`, {
+                json: {
+                    context: {
+                        client: {
+                            clientName: "WEB",
+                            clientVersion: "2.20201022.01.01",
+                        },
+                    },
+                    continuation: pageToken
+                },
+            }, (error, response, body) => {
+                if (!error && response.statusCode === 200) {
+                    console.log(body);
+                    parseJsonFormat(body.onResponseReceivedCommands[0].appendContinuationItemsAction.continuationItems, json);
+                    return resolve(json);
+                }
+                resolve({ error: error });
+            });
+        }
+        else {
+            let url = `https://www.youtube.com/channel/${encodeURIComponent(query)}/videos`;
+
+            request(url, (error, response, html) => {
+                // Check for errors
+                if (!error && response.statusCode === 200) {
+                    json["parser"] = "json_format";
+
+                    // Get script json data from html to parse
+                    let data, otherData, items = [];
+                    try {
+                        let match = html.match(/ytInitialData[^{]*(.*"microformat":[^;]*});/s);
+                        json["parser"] += ".object_var";
+                        data = JSON.parse(match[1]);
+                        let gridRenderer = data.contents.twoColumnBrowseResultsRenderer.tabs[1].tabRenderer.content.sectionListRenderer.contents[0].itemSectionRenderer.contents[0].gridRenderer;
+                        items = gridRenderer.items;
+                        json["key"] = gridRenderer.continuations[0].nextContinuationData.clickTrackingParams;
+                        json["nextPageToken"] = gridRenderer.continuations[0].nextContinuationData.continuation;
+                        let otherMatch = html.match(/(?<=ytcfg\.set\(){.+?}(?=\);)/s);
+                        otherData = JSON.parse(otherMatch[0]);
+                        json["idToken"] = otherData.ID_TOKEN;
+                    }
+                    catch(ex) {
+                        console.error("Failed to parse data:", ex);
+                        console.log(data);
+                    }
+
+                    items.forEach(item => {
+                        let renderer = item.gridVideoRenderer;
+                        let timeStatusRenderer = null;
+                        renderer.thumbnailOverlays.forEach(overlay => {
+                            if (overlay.thumbnailOverlayTimeStatusRenderer) {
+                                timeStatusRenderer = overlay.thumbnailOverlayTimeStatusRenderer;
+                            }
+                        });
+                        let result = {
+                            "id": renderer.videoId,
+                            "title": renderer.title.runs.reduce(comb, ""),
+                            "url": `https://www.youtube.com${renderer.navigationEndpoint.commandMetadata.webCommandMetadata.url}`,
+                            "duration": timeStatusRenderer ? timeStatusRenderer.text.simpleText : "Live",
+                            "upload_date": renderer.publishedTimeText ? renderer.publishedTimeText.simpleText : "Live",
+                            "thumbnail_src": renderer.thumbnail.thumbnails[renderer.thumbnail.thumbnails.length - 1].url,
+                            "views": renderer.viewCountText ?
+                                renderer.viewCountText.simpleText || renderer.viewCountText.runs.reduce(comb, "") :
+                                (renderer.publishedTimeText ? "0 views" : "0 watching")
+                        };
+                        json.results.push(result);
+                    });
+
+                    return resolve(json);
+                }
+                resolve({ error: error });
+            })
+        }
+    })
+};
+
 /**
  * Parse youtube search results from json sectionList array and add to json result object
  * @param {Array} contents - The array of sectionLists
@@ -220,3 +306,4 @@ function comb(a, b) {
 }
 
 module.exports.youtube = youtube;
+module.exports.channel = channel;
